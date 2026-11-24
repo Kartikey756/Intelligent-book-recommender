@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intelligent Library Book Recommendation System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-wrap">
+            <span class="nav-title">Intelligent Library Book Recommendation System</span>
+            <div class="nav-links">
+                <a href="#recommender">Recommender</a>
+                <a href="#compare">Model Comparison</a>
+                <a href="#evaluation">Evaluation</a>
+                <button type="button" class="list-btn" onclick="toggleDrawer()">
+                    Reading List <span id="savedCount">0</span>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container">
+        <header class="page-header">
+            <h1>Book Recommendation Prototype</h1>
+            <p>Book-Crossing Dataset — Random Forest, SVM (LinearSVC), and Decision Tree</p>
+        </header>
+
+        <section id="recommender" class="card">
+            <div class="card-head">
+                <h2>1. Reader Input &amp; Model Selection</h2>
+            </div>
+
+            <form method="POST" class="form-grid">
+                <div class="field">
+                    <div class="label-row">
+                        <label for="age">Reader Age</label>
+                        <span class="val" id="ageVal">{{ age }}</span>
+                    </div>
+                    <input type="range" id="age" name="age" min="10" max="80" value="{{ age }}" oninput="ageVal.textContent = this.value">
+                </div>
+
+                <div class="field">
+                    <div class="label-row">
+                        <label for="user_avg">User Average Rating (1–10)</label>
+                        <span class="val" id="rateVal">{{ user_avg }}</span>
+                    </div>
+                    <input type="range" id="user_avg" name="user_avg" min="1" max="10" step="0.5" value="{{ user_avg }}" oninput="rateVal.textContent = this.value">
+                </div>
+
+                <div class="field">
+                    <label for="model">Classifier</label>
+                    <select id="model" name="model">
+                        <option value="Random Forest" {% if selected_model == 'Random Forest' %}selected{% endif %}>Random Forest</option>
+                        <option value="SVM (LinearSVC)" {% if selected_model == 'SVM (LinearSVC)' %}selected{% endif %}>SVM (LinearSVC)</option>
+                        <option value="Decision Tree" {% if selected_model == 'Decision Tree' %}selected{% endif %}>Decision Tree</option>
+                    </select>
+                </div>
+
+                <div class="field span-2">
+                    <label for="keyword">Title or Author Filter (Optional)</label>
+                    <input type="text" id="keyword" name="keyword" value="{{ keyword }}" placeholder="Filter by book title or author...">
+                </div>
+
+                <div class="field">
+                    <button type="submit" class="btn-primary">Recommend Books</button>
+                </div>
+            </form>
+        </section>
+
+        {% if searched %}
+        <section class="results">
+            <div class="section-head">
+                <h2>Recommended Books ({{ selected_model }})</h2>
+                <span class="count">{{ recommendations|length }} results</span>
+            </div>
+
+            {% if recommendations %}
+            <div class="books-grid">
+                {% for book in recommendations %}
+                <article class="book-card">
+                    <div>
+                        <div class="book-top">
+                            <span class="rank">#{{ loop.index }} • {{ book['Year-Of-Publication'] | int }}</span>
+                            <button type="button" class="heart-btn"
+                                data-title="{{ book['Book-Title'] }}"
+                                data-author="{{ book['Book-Author'] }}"
+                                data-score="{{ book['Match_Score'] }}"
+                                onclick="toggleSave(this)">♡</button>
+                        </div>
+                        <h3>{{ book['Book-Title'] }}</h3>
+                        <p class="author">{{ book['Book-Author'] }}</p>
+                        <p class="pub">{{ book['Publisher'] }}</p>
+                    </div>
+
+                    <div>
+                        <div class="metrics">
+                            <div class="row"><span>Book Avg Rating</span><strong>{{ "%.2f"|format(book['Book_Avg_Rating']) }} / 10</strong></div>
+                            <div class="row"><span>Predicted Probability</span><strong class="teal">{{ book['Match_Score'] }}%</strong></div>
+                            <div class="bar"><div class="fill" style="width: {{ book['Match_Score'] }}%;"></div></div>
+                        </div>
+                        <button type="button" class="btn-link" onclick="jumpCompare('{{ book['Book-Title'] | replace("'", "\\'") }}')">
+                            Compare All 3 Classifiers
+                        </button>
+                    </div>
+                </article>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="card empty">No books found matching "{{ keyword }}".</div>
+            {% endif %}
+        </section>
+        {% endif %}
+
+        <section id="compare" class="card">
+            <div class="card-head">
+                <h2>2. Single-Book Classifier Comparison</h2>
+            </div>
+
+            <div class="compare-bar">
+                <input list="bookList" id="bookInput" placeholder="Select or enter a book title...">
+                <datalist id="bookList">
+                    {% for t in popular_titles %}<option value="{{ t }}"></option>{% endfor %}
+                </datalist>
+                <button type="button" class="btn-primary" onclick="runCompare()">Compare</button>
+            </div>
+            <div id="compareOut" class="compare-out hidden"></div>
+        </section>
+
+        <section id="evaluation" class="card">
+            <div class="card-head">
+                <h2>3. Model Evaluation Metrics</h2>
+            </div>
+
+            <div class="bench-grid">
+                <div class="chart-box"><canvas id="benchChart"></canvas></div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Model</th>
+                                <th class="num">Accuracy</th>
+                                <th class="num">Precision</th>
+                                <th class="num">Recall</th>
+                                <th class="num">F1-Score</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in comparison %}
+                            <tr class="{% if loop.first %}highlight-row{% endif %}">
+                                <td><strong>{{ row['Model'] }}</strong></td>
+                                <td class="num">{{ "%.2f"|format(row['Accuracy'] * 100) }}%</td>
+                                <td class="num">{{ "%.2f"|format(row['Precision'] * 100) }}%</td>
+                                <td class="num">{{ "%.2f"|format(row['Recall'] * 100) }}%</td>
+                                <td class="num teal"><strong>{{ "%.2f"|format(row['F1-Score'] * 100) }}%</strong></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <aside id="drawer" class="drawer">
+        <div class="drawer-head">
+            <h3>Reading List</h3>
+            <button type="button" onclick="toggleDrawer()">✕</button>
+        </div>
+        <div id="drawerBody" class="drawer-body"></div>
+    </aside>
+    <div id="overlay" class="overlay" onclick="toggleDrawer()"></div>
+
+    <script>
+        function jumpCompare(title) {
+            bookInput.value = title;
+            compare.scrollIntoView({ behavior: 'smooth' });
+            runCompare();
+        }
+
+        async function runCompare() {
+            const title = bookInput.value.trim();
+            if (!title) return;
+            compareOut.classList.remove('hidden');
+            compareOut.innerHTML = '<p class="muted">Running inference...</p>';
+
+            const res = await fetch('/api/compare_book', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, age: age.value, user_avg: user_avg.value })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                compareOut.innerHTML = `<p class="err">${data.error}</p>`;
+                return;
+            }
+            compareOut.innerHTML = `
+                <div class="book-banner">
+                    <div><strong>${data.title}</strong><span class="muted"> — ${data.author} (${data.year})</span></div>
+                    <span>Avg Rating: ${data.avg_rating} / 10</span>
+                </div>
+                <div class="arena-grid">
+                    ${data.results.map(r => `
+                        <div class="arena-card">
+                            <div class="row"><strong>${r.model}</strong><span class="v-tag ${r.verdict === 'Recommended' ? 'yes' : 'no'}">${r.verdict}</span></div>
+                            <div class="big-num">${r.score}%</div>
+                            <div class="bar"><div class="fill" style="width:${r.score}%"></div></div>
+                        </div>
+                    `).join('')}
+                </div>`;
+        }
+
+        let saved = JSON.parse(localStorage.getItem('savedBooks') || '[]');
+        function renderSaved() {
+            savedCount.textContent = saved.length;
+            drawerBody.innerHTML = saved.length
+                ? saved.map((b, i) => `<div class="saved-item"><div><strong>${b.title}</strong><span>${b.author} (${b.score}%)</span></div><button onclick="removeSaved(${i})">✕</button></div>`).join('')
+                : '<p class="muted center">No saved books.</p>';
+            document.querySelectorAll('.heart-btn').forEach(btn => {
+                const on = saved.some(b => b.title === btn.dataset.title);
+                btn.textContent = on ? '♥' : '♡';
+                btn.classList.toggle('active', on);
+            });
+        }
+        function toggleSave(btn) {
+            const idx = saved.findIndex(b => b.title === btn.dataset.title);
+            idx > -1 ? saved.splice(idx, 1) : saved.push({ title: btn.dataset.title, author: btn.dataset.author, score: btn.dataset.score });
+            localStorage.setItem('savedBooks', JSON.stringify(saved));
+            renderSaved();
+        }
+        function removeSaved(i) { saved.splice(i, 1); localStorage.setItem('savedBooks', JSON.stringify(saved)); renderSaved(); }
+        function toggleDrawer() { drawer.classList.toggle('open'); overlay.classList.toggle('show'); }
+        renderSaved();
+
+        const compData = {{ comparison | tojson | safe }};
+        new Chart(benchChart, {
+            type: 'bar',
+            data: {
+                labels: compData.map(r => r.Model),
+                datasets: [
+                    { label: 'Accuracy %', data: compData.map(r => (r.Accuracy * 100).toFixed(2)), backgroundColor: '#94a3b8', borderRadius: 4 },
+                    { label: 'Precision %', data: compData.map(r => (r.Precision * 100).toFixed(2)), backgroundColor: '#3b82f6', borderRadius: 4 },
+                    { label: 'Recall %', data: compData.map(r => (r.Recall * 100).toFixed(2)), backgroundColor: '#6366f1', borderRadius: 4 },
+                    { label: 'F1-Score %', data: compData.map(r => (r['F1-Score'] * 100).toFixed(2)), backgroundColor: '#0f766e', borderRadius: 4 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true, max: 100, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } }
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+__pycache__/
+.ipynb_checkpoints/
+*.pyc
+Books.csv
+Ratings.csv
+Users.csv
